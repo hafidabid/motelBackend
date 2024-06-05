@@ -40,11 +40,11 @@ app.use((req, res, next) => {
   next();
 });
 
-const port = 5000;
+const port = process.env.PORT ?? 3080;
 
 async function main() {
   await mongoose.connect(
-    `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.in81gjk.mongodb.net/motel-develpoment-db`
+    `${process.env.MONGO_URI}`
   );
   try {
     app.listen(port, () => {

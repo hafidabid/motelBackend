@@ -14,7 +14,6 @@ exports.getStripePublishableKey = async (req, res) => {
 
 exports.createPaymentIntent = async (req, res) => {
   try {
-    console.log("hit, payment");
     const payload = req.body;
     console.log(payload);
     const paymentIntent = await stripe.paymentIntents.create({

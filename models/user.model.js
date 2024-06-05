@@ -5,12 +5,12 @@ const userSchema = new mongoose.Schema({
         firstName: {
             type: String,
             default: "",
-            required: true,
+            required: false,
         },
         lastName: {
             type: String,
             default: "",
-            required: true,
+            required: false,
         },
     },
     birthDate: {
@@ -19,18 +19,37 @@ const userSchema = new mongoose.Schema({
     },
     emailId: {
         type: String,
-        default: "",
+        default: null,
+        required: false,
+        nullable: true,
+        unique: true
+    },
+    ethAddress: {
+        type: String,
         required: true,
         unique: true
     },
+    nonce: {
+        type: String,
+        default: null,
+        required: true,
+        nullable: false,
+        unique: true
+    },
     password: {
-        type: String
+        type: String,
+        default: "",
+        required: false,
     },
     accessToken: {
         type: String,
+        default: "",
+        required: false,
     },
     refreshToken: {
-        type: String
+        type: String,
+        default: "",
+        required: false,
     },
     role: {
         type: String,

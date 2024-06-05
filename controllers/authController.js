@@ -4,6 +4,9 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const House = require("../models/house.model");
+const { v4: uuidv4 } = require('uuid');
+const ethUtil = require('ethereumjs-util')
+const esu = require('eth-sig-util')
 
 const saltRounds = 10;
 const daysToSeconds = 1 * 60 * 60; //   days * hours *  minutes *  seconds
@@ -12,6 +15,7 @@ const expirationTimeInSeconds = Math.floor(Date.now() / 1000) + daysToSeconds;
 exports.signUp = async (req, res, next) => {
   try {
     const payload = req.body;
+    console.log(payload)
     if (!payload.name) {
       throw new Error("Please provide user name");
     }
@@ -22,19 +26,49 @@ exports.signUp = async (req, res, next) => {
       throw new Error("Please provide date of birth");
     }
 
-    const passwordHash = await bcrypt.hash(payload.password, saltRounds);
+    if(!payload.ethAddress){
+      throw new Error("No ETH address given");
+    }
 
-    const userObj = {
-      name: {
-        firstName: payload.name.firstName,
-        lastName: payload.name.lastName,
-      },
-      emailId: payload.emailId,
-      birthDate: payload.birthDate,
-      password: passwordHash,
-    };
+    // find user first
+    const currentUser = await User.findOne({
+      ethAddress: payload.ethAddress
+    })
 
-    const user = await User(userObj).save();
+    if(!currentUser){
+      throw new Error("User not found");
+    }
+
+    if(currentUser.status === "Complete"){
+      throw new Error("User has complete registration before");
+    }
+
+    if(!payload.signature){
+      throw new Error("No ETH signature given");
+    }
+
+    // verify signature first
+    const msg = `nonce_${currentUser.nonce}`
+    const msgBufferHex = ethUtil.bufferToHex(Buffer.from(msg, 'utf8'));
+    const address = esu.recoverPersonalSignature({
+      data: msgBufferHex,
+      sig: payload.signature
+    })
+    console.log(currentUser.ethAddress, address)
+    if(address.toLowerCase() !== currentUser.ethAddress){
+      throw new Error("Invalid signature");
+    }
+
+    currentUser.name = {
+      firstName: payload.name.firstName,
+      lastName: payload.name.lastName,
+    }
+
+    currentUser.emailId = payload.emailId
+    currentUser.birthDate = payload.birthDate
+    currentUser.password = ""
+
+    await currentUser.save();
     const findCriteria = {
       emailId: payload.emailId,
     };
@@ -81,27 +115,35 @@ exports.signUp = async (req, res, next) => {
 
 exports.logIn = async (req, res) => {
   const payload = req.body;
-  const email = payload.email;
-  const password = payload.password;
+  const email = payload.ethAddress.toString().toLowerCase();
 
   const findCriteria = {
-    emailId: email,
+    ethAddress: email,
   };
-  const userDetails = await User.find(findCriteria).limit(1).exec();
+  const userDetails = await User.findOne(findCriteria);
+
+  if(!userDetails){
+    throw new Error(`user not found!`)
+  }
 
   try {
-    let isMatched = await bcrypt.compare(password, userDetails[0].password);
-    if (isMatched) {
+    const msg = `nonce_${userDetails.nonce}`
+    const msgBufferHex = ethUtil.bufferToHex(Buffer.from(msg, 'utf8'));
+    const address = esu.recoverPersonalSignature({
+      data: msgBufferHex,
+      sig: payload.signature
+    })
+    if (address.toLowerCase() === userDetails.ethAddress) {
       const accessToken = jwt.sign(
         {
-          _id: userDetails[0]._id,
-          role: userDetails[0].role,
+          _id: userDetails._id,
+          role: userDetails.role,
         },
         process.env.ACCESS_TOKEN_SECRET,
         { expiresIn: expirationTimeInSeconds }
       );
       const refreshToken = jwt.sign(
-        { _id: userDetails[0]._id, role: userDetails[0].role },
+        { _id: userDetails._id, role: userDetails.role },
         process.env.REFRESH_TOKEN_SECRET
       );
 
@@ -119,17 +161,14 @@ exports.logIn = async (req, res) => {
         user_details: updatedUser,
       };
       res.send(response);
-    } else if (!isMatched) {
-      let response = {
-        info: "Incorrect Password",
-        success: 0,
-      };
-      res.send(response);
     } else {
       res.send("Not allowed!");
     }
   } catch (error) {
-    res.status(500).send();
+    console.error(error)
+    res.status(500).send({
+      error: error.message
+    });
   }
 };
 
@@ -151,7 +190,7 @@ exports.refreshToken = async (req, res) => {
         _id: new mongoose.Types.ObjectId(userId),
       };
       const userDetails = await User.findById(findCriteria);
-      console.log(userDetails.refreshToken, userDetails, "LINE 138");
+      
       if (userDetails.refreshToken !== refreshToken) {
         return res.sendStatus(403);
       }
@@ -395,5 +434,47 @@ exports.userToHost = async (req, res) => {
     res.status(200).send(response);
   } catch (error) {
     console.log(error);
+  }
+};
+
+exports.checkAddress = async (req, res) => {
+  try {
+    const payload = req.body;
+    const findCriteria = {
+     ethAddress: payload.ethAddress.toString().toLowerCase(),
+    };
+    const isEmailExist = await User.findOne(findCriteria);
+
+    let response;
+    if (isEmailExist ) {
+      // update nonce
+      isEmailExist.nonce = uuidv4()
+      await isEmailExist.save()
+
+      response = {
+        info: "User email exist.",
+        success: (isEmailExist.emailId && isEmailExist.birthDate && isEmailExist.name) ? 1 : 0,
+        status: 200,
+        nonce: isEmailExist.nonce
+      };
+    } else {
+      // create new user and nonce
+      const newUser = new User({
+        nonce: uuidv4(),
+        ethAddress: payload.ethAddress.toLowerCase()
+      })
+
+      await newUser.save()
+      response = {
+        info: "User email doesn't exist.",
+        success: 0,
+        status: 200,
+        nonce: newUser.nonce
+      };
+    }
+    res.status(200).send(response);
+  } catch (error) {
+    console.log(error);
+    res.status(500).send("Failed to search");
   }
 };
